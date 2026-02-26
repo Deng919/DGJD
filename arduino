@@ -1,1 +1,194 @@
+// 导入核心库
+#include <Servo.h>
+#include <LiquidCrystal.h>
 
+// ====================== 硬件引脚配置 ======================
+const int RS_PIN = 12;
+const int EN_PIN = 11;
+const int D4_PIN = 10;
+const int D5_PIN = 9;
+const int D6_PIN = 8;
+const int D7_PIN = 13;
+
+#define SERVO_PIN 6
+#define BUZZER_PIN 7
+
+#define ANGLE_CLOSE 0
+#define ANGLE_OPEN 90
+
+// ====================== 指令配置 ======================
+#define ALLOW_CMD "ALLOW"
+#define DENY_CMD "DENY"
+#define DELIMITER ","
+#define NEXT_PLATE_DELAY 5000  // 冷却期（毫秒），当前设为5秒，可改回15000
+
+// ====================== 状态 ======================
+bool isWaiting = false;        // 是否处于冷却期
+unsigned long waitStartTime = 0;
+
+Servo gateServo;
+LiquidCrystal lcd(RS_PIN, EN_PIN, D4_PIN, D5_PIN, D6_PIN, D7_PIN);
+
+String recvData = "";
+bool recvFlag = false;
+
+void setup() {
+  Serial.begin(9600);
+
+  // 初始化舵机（默认落杆）
+  gateServo.attach(SERVO_PIN);
+  gateServo.write(ANGLE_CLOSE);
+
+  // 初始化蜂鸣器（默认关闭）
+  pinMode(BUZZER_PIN, OUTPUT);
+  digitalWrite(BUZZER_PIN, LOW);
+
+  // 初始化1602液晶屏
+  lcd.begin(16, 2);
+  lcd.clear();
+  lcd.setCursor(2, 0); lcd.print("System Ready");
+  lcd.setCursor(2, 1); lcd.print("Waiting...");
+}
+
+void loop() {
+  // 冷却期逻辑：优先处理冷却，完全屏蔽串口接收
+  if (isWaiting) {
+    unsigned long elap = millis() - waitStartTime;
+    // 冷却期未结束
+    if (elap < NEXT_PLATE_DELAY) {
+      int rem = (NEXT_PLATE_DELAY - elap) / 1000;
+      lcd.setCursor(0, 1);
+      lcd.print("Wait: ");
+      lcd.print(rem);
+      lcd.print("s      ");
+      
+      // 关键修改：冷却期内清空串口缓冲区，不接收任何数据
+      while (Serial.available() > 0) {
+        Serial.read(); // 读取并丢弃串口数据，避免缓存堆积
+      }
+      recvData = "";   // 清空接收缓冲区
+      recvFlag = false;// 重置接收标记
+      return; // 直接退出loop，不执行后续逻辑
+    } 
+    // 冷却期结束
+    else {
+      isWaiting = false;
+      restoreStandbyScreen();
+      Serial.println("Cool-down finished! Ready for new plate.");
+    }
+  }
+
+  // 仅在非冷却期才读取串口数据
+  readSerialData();
+
+  // 解析并执行指令（仅非冷却期会执行到这里）
+  if (recvFlag) {
+    parseAndExecute(recvData);
+    recvData = "";
+    recvFlag = false;
+
+    // 执行完指令后，立即进入冷却期
+    isWaiting = true;
+    waitStartTime = millis();
+  }
+}
+
+// ====================== 读取串口数据（仅非冷却期生效） ======================
+void readSerialData() {
+  while (Serial.available() > 0) {
+    char ch = Serial.read();
+    // 仅保留有效字符
+    if ((ch >= '0' && ch <= '9') || (ch >= 'A' && ch <= 'Z') || (ch >= 'a' && ch <= 'z') || ch == ',' || ch == '\n') {
+      if (ch == '\n') {
+        recvFlag = true; // 换行符标记指令接收完成
+        break;
+      }
+      recvData += ch; // 有效字符加入缓冲区
+    }
+  }
+}
+
+// ====================== 适配屏幕显示车牌 ======================
+String fitPlate(String s) {
+  s.toUpperCase();
+  if (s.length() > 8) s = s.substring(0, 8);
+  return s;
+}
+
+// ====================== 蜂鸣器控制 ======================
+void beepOnce() {
+  digitalWrite(BUZZER_PIN, HIGH);
+  delay(200);
+  digitalWrite(BUZZER_PIN, LOW);
+}
+
+void beep3Seconds() {
+  unsigned long st = millis();
+  while (millis() - st < 3000) {
+    digitalWrite(BUZZER_PIN, HIGH);
+    delay(300);
+    digitalWrite(BUZZER_PIN, LOW);
+    delay(200);
+  }
+  digitalWrite(BUZZER_PIN, LOW);
+}
+
+// ====================== 解析指令并执行 ======================
+void parseAndExecute(String data) {
+  int idx = data.indexOf(DELIMITER);
+  if (idx == -1) {
+    showError("Bad Format");
+    return;
+  }
+
+  String cmd = data.substring(0, idx);
+  String plate = data.substring(idx + 1);
+  plate = fitPlate(plate);
+
+  cmd.toUpperCase();
+
+  if (cmd == ALLOW_CMD) {
+    allowPass(plate);
+  } else if (cmd == DENY_CMD) {
+    denyPass(plate);
+  } else {
+    showError("Unknown Cmd");
+  }
+}
+
+// ====================== 允许通行 ======================
+void allowPass(String plate) {
+  lcd.clear();
+  lcd.setCursor(0, 0); lcd.print("Plate: "); lcd.print(plate);
+  lcd.setCursor(3, 1); lcd.print("SUCCESS");
+
+  beepOnce();  // 响1声
+
+  gateServo.write(ANGLE_OPEN);
+  delay(10000);
+  gateServo.write(ANGLE_CLOSE);
+}
+
+// ====================== 禁止通行 ======================
+void denyPass(String plate) {
+  lcd.clear();
+  lcd.setCursor(0, 0); lcd.print("Plate: "); lcd.print(plate);
+  lcd.setCursor(6, 1); lcd.print("FAIL");
+
+  beep3Seconds();  // 响3秒
+}
+
+// ====================== 错误提示 ======================
+void showError(String msg) {
+  lcd.clear();
+  lcd.setCursor(2, 0); lcd.print("ERROR");
+  lcd.setCursor(3, 1); lcd.print(msg);
+  delay(2000);
+}
+
+// ====================== 恢复待机界面 ======================
+void restoreStandbyScreen() {
+  lcd.clear();
+  lcd.setCursor(2, 0); lcd.print("System Ready");
+  lcd.setCursor(2, 1); lcd.print("Waiting...");
+}
