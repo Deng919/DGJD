@@ -10,4 +10,5 @@
 <5>增加检测计数器，只有连续检测才触发识别，同时5帧识别一次减低算力消耗，同一车牌仅发送一次指令，定期清空缓存
 <6>摄像头资源释放（cap.release ()）串口资源关闭（arduino_serial.close ()）窗口销毁（cv2.destroyAllWindows ()）异常捕获：串口 / 摄像头初始化失败时给出明确提示，程序不崩溃
 
-所有用到的库版本都放在ku文件中
+用到的库：OpenCV，numpy，serial，imutils，hyperlpr，sys，time，rs
+所有用到的库版本都放在ku文件中，python版本为3.9
