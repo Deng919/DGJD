@@ -12,3 +12,5 @@
 
 用到的库：OpenCV，numpy，serial，imutils，hyperlpr，sys，time，rs
 所有用到的库版本都放在ku文件中，python版本为3.9
+最终使用的代码为test1文件
+
